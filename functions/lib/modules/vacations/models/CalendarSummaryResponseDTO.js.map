@@ -1,0 +1,1 @@
+{"version":3,"file":"CalendarSummaryResponseDTO.js","sourceRoot":"","sources":["../../../../src/modules/vacations/models/CalendarSummaryResponseDTO.ts"],"names":[],"mappings":";AAAA,+DAA+D;;;AAK/D,MAAa,0BAA0B;IAIrC,YACE,SAAoC,EACpC,QAAmB;QAEnB,IAAI,CAAC,SAAS,GAAG,SAAS,CAAC;QAC3B,IAAI,CAAC,QAAQ,GAAG,QAAQ,CAAC;IAC3B,CAAC;CACF;AAXD,gEAWC"}
