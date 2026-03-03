@@ -1,15 +1,16 @@
-import { getFirestore } from "firebase-admin/firestore";
+//employees.repository.ts
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { EmployeeEntity } from "./models/EmployeeEntity";
 
 const db = getFirestore();
-const COLLECTION = "employees";
+export const EMPLOYEES_COLLECTION = "employees";
 
 class EmployeesRepository {
   /* ===============================
    * BY UID
    * =============================== */
   async findByUid(uid: string): Promise<EmployeeEntity | null> {
-    const snap = await db.collection(COLLECTION).doc(uid).get();
+    const snap = await db.collection(EMPLOYEES_COLLECTION).doc(uid).get();
 
     if (!snap.exists) return null;
 
@@ -28,7 +29,7 @@ class EmployeesRepository {
    * =============================== */
   async findByEmail(email: string): Promise<EmployeeEntity | null> {
     const snap = await db
-      .collection(COLLECTION)
+      .collection(EMPLOYEES_COLLECTION)
       .where("email", "==", email)
       .where("deleted", "==", false)
       .limit(1)
@@ -49,8 +50,21 @@ class EmployeesRepository {
    * ALL (NOT DELETED)
    * =============================== */
   async findAll(): Promise<EmployeeEntity[]> {
+    const snap = await db.collection(EMPLOYEES_COLLECTION).where("deleted", "==", false).get();
+
+    return snap.docs.map((d) => ({
+      uid: d.id,
+      ...(d.data() as Omit<EmployeeEntity, "uid">),
+    }));
+  }
+
+  /* ===============================
+   * ALL NOT ADMIN
+   * =============================== */
+  async findAllNotAdmin(): Promise<EmployeeEntity[]> {
     const snap = await db
-      .collection(COLLECTION)
+      .collection(EMPLOYEES_COLLECTION)
+      .where("role", "!=", "ADMIN")
       .where("deleted", "==", false)
       .get();
 
@@ -60,20 +74,26 @@ class EmployeesRepository {
     }));
   }
 
-  /* ===============================
-   * ALL NOT CEO
-   * =============================== */
-  async findAllNotCeo(): Promise<EmployeeEntity[]> {
-    const snap = await db
-      .collection(COLLECTION)
-      .where("ceo", "==", false)
-      .where("deleted", "==", false)
-      .get();
+  async create(uid: string, data: Omit<EmployeeEntity, "uid">) {
+    const ref = db.collection(EMPLOYEES_COLLECTION).doc(uid);
+    await ref.set(data);
 
-    return snap.docs.map((d) => ({
-      uid: d.id,
-      ...(d.data() as Omit<EmployeeEntity, "uid">),
-    }));
+    return {
+      uid,
+      ...data,
+    };
+  }
+
+  async update(id: string, data: Partial<EmployeeEntity>): Promise<EmployeeEntity> {
+    const employeeRef = db.collection(EMPLOYEES_COLLECTION).doc(id);
+
+    await employeeRef.update({
+      ...data,
+      updatedAt: Timestamp.now(),
+    });
+
+    const updatedSnapshot = await employeeRef.get();
+    return updatedSnapshot.data() as EmployeeEntity;
   }
 }
 

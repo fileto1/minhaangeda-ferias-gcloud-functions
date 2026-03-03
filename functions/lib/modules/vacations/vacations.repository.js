@@ -1,15 +1,16 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.vacationsRepository = void 0;
+exports.vacationsRepository = exports.VACATIONS_COLLECTION = void 0;
 const firestore_1 = require("firebase-admin/firestore");
+const models_1 = require("./models");
 const db = (0, firestore_1.getFirestore)();
-const COLLECTION = "vacations";
+exports.VACATIONS_COLLECTION = "vacations";
 class VacationsRepository {
     /* ===============================
      * FIND BY ID (NOT DELETED)
      * =============================== */
     async findById(id) {
-        const snap = await db.collection(COLLECTION).doc(id).get();
+        const snap = await db.collection(exports.VACATIONS_COLLECTION).doc(id).get();
         if (!snap.exists)
             return null;
         const data = snap.data();
@@ -25,10 +26,10 @@ class VacationsRepository {
      * =============================== */
     async findByEmployee(employeeUid) {
         const snap = await db
-            .collection(COLLECTION)
+            .collection(exports.VACATIONS_COLLECTION)
             .where("employeeUid", "==", employeeUid)
             .where("deleted", "==", false)
-            .orderBy("startDate", "desc")
+            .orderBy("startDate", "asc")
             .get();
         return snap.docs.map((d) => ({
             id: d.id,
@@ -40,7 +41,7 @@ class VacationsRepository {
      * =============================== */
     async findAllPending() {
         const snap = await db
-            .collection(COLLECTION)
+            .collection(exports.VACATIONS_COLLECTION)
             .where("status", "==", "PENDING")
             .where("deleted", "==", false)
             .get();
@@ -50,15 +51,32 @@ class VacationsRepository {
         }));
     }
     /* ===============================
+     * ALL NOT PENDING
+     * =============================== */
+    async findAllNotPendingByDateRange(start, end) {
+        const statuses = (0, models_1.getStatusesExcept)(models_1.EmployeeVacationStatusEnum.PENDING);
+        const snap = await db
+            .collection(exports.VACATIONS_COLLECTION)
+            .where("deleted", "==", false)
+            .where("status", "in", statuses)
+            .where("startDate", "<=", end)
+            .where("endDate", ">=", start)
+            .get();
+        return snap.docs.map((d) => ({
+            id: d.id,
+            ...d.data(),
+        }));
+    }
+    /* ===============================
      * BY DATE RANGE + STATUS
      * =============================== */
-    async findApprovedByDateRange(startDate, endDate) {
+    async findApprovedByDateRange(start, end) {
         const snap = await db
-            .collection(COLLECTION)
-            .where("endDate", ">=", startDate)
-            .where("startDate", "<=", endDate)
-            .where("status", "==", "APPROVED")
+            .collection(exports.VACATIONS_COLLECTION)
             .where("deleted", "==", false)
+            .where("status", "==", "APPROVED")
+            .where("startDate", "<=", end)
+            .where("endDate", ">=", start)
             .get();
         return snap.docs.map((d) => ({
             id: d.id,
@@ -70,7 +88,7 @@ class VacationsRepository {
      * =============================== */
     async findApprovedUntil(maxDate) {
         const snap = await db
-            .collection(COLLECTION)
+            .collection(exports.VACATIONS_COLLECTION)
             .where("startDate", "<", maxDate)
             .where("status", "==", "APPROVED")
             .where("deleted", "==", false)
@@ -84,32 +102,46 @@ class VacationsRepository {
     /* ===============================
      * EXISTS IN RANGE
      * =============================== */
-    async existsInRange(startDate, endDate, employeeUid) {
-        const snap = await db
-            .collection(COLLECTION)
+    // async existsInRange(
+    //   startDate: string,
+    //   endDate: string,
+    //   employeeUid: string,
+    // ): Promise<boolean> {
+    //   const snap = await db
+    //     .collection(VACATIONS_COLLECTION)
+    //     .where("employeeUid", "==", employeeUid)
+    //     .where("endDate", ">=", startDate)
+    //     .where("startDate", "<=", endDate)
+    //     .where("deleted", "==", false)
+    //     .limit(1)
+    //     .get();
+    //   return !snap.empty;
+    // }
+    async existsInRange(start, end, employeeUid) {
+        const snapshot = await db
+            .collection("vacations")
             .where("employeeUid", "==", employeeUid)
-            .where("endDate", ">=", startDate)
-            .where("startDate", "<=", endDate)
             .where("deleted", "==", false)
-            .limit(1)
+            .where("startDate", "<=", end)
+            .where("endDate", ">=", start)
             .get();
-        return !snap.empty;
+        return !snapshot.empty;
     }
-    async existsInRangeExcept(startDate, endDate, employeeUid, exceptId) {
+    async existsInRangeExcept(start, end, employeeUid, exceptId) {
         const snap = await db
-            .collection(COLLECTION)
+            .collection(exports.VACATIONS_COLLECTION)
             .where("employeeUid", "==", employeeUid)
-            .where("endDate", ">=", startDate)
-            .where("startDate", "<=", endDate)
             .where("deleted", "==", false)
+            .where("startDate", "<=", end)
+            .where("endDate", ">=", start)
             .get();
-        return snap.docs.some((d) => d.id !== exceptId);
+        return snap.docs.some((doc) => doc.id !== exceptId);
     }
     /* ===============================
      * CREATE / UPDATE / SOFT DELETE
      * =============================== */
     async create(data) {
-        await db.collection(COLLECTION).add({
+        await db.collection(exports.VACATIONS_COLLECTION).add({
             ...data,
             deleted: false,
             createdAt: firestore_1.Timestamp.now(),
@@ -117,7 +149,7 @@ class VacationsRepository {
     }
     async update(id, data) {
         await db
-            .collection(COLLECTION)
+            .collection(exports.VACATIONS_COLLECTION)
             .doc(id)
             .update({
             ...data,
@@ -125,7 +157,7 @@ class VacationsRepository {
         });
     }
     async delete(id) {
-        await db.collection(COLLECTION).doc(id).update({
+        await db.collection(exports.VACATIONS_COLLECTION).doc(id).update({
             deleted: true,
             deletedAt: firestore_1.Timestamp.now(),
         });

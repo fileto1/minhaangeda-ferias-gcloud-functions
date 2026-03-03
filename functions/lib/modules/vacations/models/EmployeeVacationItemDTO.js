@@ -2,18 +2,20 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EmployeeVacationItemDTO = void 0;
 // modules/employeesVacation/dtos/EmployeeVacationItemDTO.ts
-const models_1 = require("../../employees/models");
+const date_utils_1 = require("../../../shared/utils/date.utils");
 class EmployeeVacationItemDTO {
-    constructor(employeeVacation, realUsedDays) {
+    constructor(employeeVacation, realUsedDays, splited = false) {
         this.id = employeeVacation.id;
-        this.startDate = employeeVacation.startDate;
-        this.endDate = employeeVacation.endDate;
+        this.startDate = date_utils_1.DateUtils.toISO(employeeVacation.startDate);
+        this.endDate = date_utils_1.DateUtils.toISO(employeeVacation.endDate);
         this.notes = employeeVacation.notes;
         this.daysQuantity = employeeVacation.daysQuantity;
         this.balanceUsedDays = employeeVacation.balanceUsedDays;
         this.realUsedDays = realUsedDays;
         this.status = employeeVacation.status;
-        this.employee = new models_1.EmployeeDto(employeeVacation.employee);
+        this.employeeUid = employeeVacation.employeeUid;
+        this.employeeName = employeeVacation.employeeName;
+        this.splited = splited;
     }
 }
 exports.EmployeeVacationItemDTO = EmployeeVacationItemDTO;

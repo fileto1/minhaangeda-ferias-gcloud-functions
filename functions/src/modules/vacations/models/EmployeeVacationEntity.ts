@@ -1,17 +1,21 @@
 import { EmployeeVacationStatusEnum } from "./EmployeeVacationStatusEnum";
+import { Timestamp } from "firebase-admin/firestore";
 
 export interface EmployeeVacationEntity {
-  id: string; // doc.id
-  employeeUid: string; // referência ao employee
-  startDate: string; // YYYY-MM-DD
-  endDate: string; // YYYY-MM-DD
+  id: string;
+  employeeUid: string;
+  employeeName: string;
+
+  startDate: Timestamp;
+  endDate: Timestamp;
+
   notes?: string;
   daysQuantity: number;
   balanceUsedDays: number;
   status: EmployeeVacationStatusEnum;
   deleted: boolean;
 
-  createdAt?: FirebaseFirestore.Timestamp;
-  updatedAt?: FirebaseFirestore.Timestamp;
-  deletedAt?: FirebaseFirestore.Timestamp;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+  deletedAt?: Timestamp;
 }

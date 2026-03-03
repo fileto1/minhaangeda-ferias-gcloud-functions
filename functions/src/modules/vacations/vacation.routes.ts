@@ -1,19 +1,29 @@
-import { Router } from 'express';
-import { VacationsController } from './vacations.controller';
-// import { authMiddleware } from '../../middlewares/auth.middleware';
+import { Router } from "express";
+import { VacationsController } from "./vacations.controller";
+import { asyncHandler } from "../../middlewares/asyncHandler";
 
 const controller = new VacationsController();
 export const vacationsRoutes = Router();
 
-// vacationsRoutes.use(authMiddleware);
+// 🔥 Wrapper elegante
+const wrap = (method: any) => asyncHandler(method.bind(controller));
 
-vacationsRoutes.get('/pending', controller.getAllPending);
-vacationsRoutes.get('/:id', controller.getById);
-vacationsRoutes.get('/byEmployee/:employeeId', controller.getAllByEmployeeId);
-vacationsRoutes.get('/allEmployeesBalance', controller.getAllEmployeesBalance);
-vacationsRoutes.get('/calendar', controller.getCalendar);
+// GET
+vacationsRoutes.get("/notPending", wrap(controller.getAllNotPending));
+vacationsRoutes.get("/pending", wrap(controller.getAllPending));
+vacationsRoutes.get("/calendar", wrap(controller.getCalendar));
+vacationsRoutes.get("/byEmployee/:employeeId", wrap(controller.getAllByEmployeeId));
+vacationsRoutes.get("/allEmployeesBalance", wrap(controller.getAllEmployeesBalance));
 
-vacationsRoutes.post('/', controller.create);
-vacationsRoutes.put('/:id', controller.update);
-vacationsRoutes.put('/status/:status/:id', controller.updateStatus);
-vacationsRoutes.delete('/:id', controller.delete);
+// Sempre por último
+vacationsRoutes.get("/:id", wrap(controller.getById));
+
+// POST
+vacationsRoutes.post("/", wrap(controller.create));
+
+// PUT
+vacationsRoutes.put("/status/:status/:id", wrap(controller.updateStatus));
+vacationsRoutes.put("/:id", wrap(controller.update));
+
+// DELETE
+vacationsRoutes.delete("/:id", wrap(controller.delete));

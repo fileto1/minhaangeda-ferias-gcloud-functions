@@ -1,16 +1,11 @@
-// modules/employeesVacation/dtos/CalendarSummaryResponseDTO.ts
-
-import { Holiday } from '../../holidays/holidays.repository';
-import { EmployeeVacationItemDTO } from './EmployeeVacationItemDTO';
+import { HolidayDto } from "../../holidays/models/HolidayDto";
+import { EmployeeVacationItemDTO } from "./EmployeeVacationItemDTO";
 
 export class CalendarSummaryResponseDTO {
   readonly vacations: EmployeeVacationItemDTO[];
-  readonly holidays: Holiday[];
+  readonly holidays: HolidayDto[];
 
-  constructor(
-    vacations: EmployeeVacationItemDTO[],
-    holidays: Holiday[]
-  ) {
+  constructor(vacations: EmployeeVacationItemDTO[], holidays: HolidayDto[]) {
     this.vacations = vacations;
     this.holidays = holidays;
   }

@@ -2,30 +2,45 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EmployeesController = void 0;
 const employee_service_1 = require("./employee.service");
+const models_1 = require("./models");
+const AppError_1 = require("../../shared/errors/AppError");
 class EmployeesController {
-    constructor() {
-        this.employeesService = new employee_service_1.EmployeesService();
+    async getAll(req, res) {
+        const result = await employee_service_1.employeesService.findAll();
+        return res.json(result.map((e) => new models_1.EmployeeDto(e)));
     }
-    /**
-     * GET /employees/:id
-     */
     async getById(req, res) {
-        try {
-            const { id } = req.params;
-            // equivalente ao Authentication authentication
-            const principal = req.user; // vindo do authMiddleware
-            // if (!principal) {
-            //   return res.status(401).json({ message: "Unauthorized" });
-            // }
-            const employee = await this.employeesService.findById(id, principal);
-            return res.status(200).json(employee);
+        const { id } = req.params;
+        const result = await employee_service_1.employeesService.findById(id);
+        return res.json(new models_1.EmployeeDto(result));
+    }
+    async create(req, res) {
+        const user = req.user;
+        if (user.role !== "ADMIN") {
+            throw new AppError_1.AppError("Você não tem permissão para criar funcionário.", 404);
         }
-        catch (error) {
-            return res.status(500).json({
-                message: "Error fetching employee",
-                error: error.message,
-            });
+        const result = await employee_service_1.employeesService.create(req.body);
+        return res.status(201).json(new models_1.EmployeeDto(result));
+    }
+    async update(req, res) {
+        const { id } = req.params;
+        const user = req.user;
+        const form = req.body;
+        if (user.uid !== form.uid && user.role !== "ADMIN") {
+            throw new AppError_1.AppError("Você não tem permissão para editar este funcionário.", 404);
         }
+        const result = await employee_service_1.employeesService.update(id, form, user);
+        return res.json(new models_1.EmployeeDto(result));
+    }
+    async delete(req, res) {
+        const { id } = req.params;
+        await employee_service_1.employeesService.softDelete(id);
+        return res.send();
+    }
+    async clearForceResetPassword(req, res) {
+        const user = req.user;
+        const updated = await employee_service_1.employeesService.updateForceResetPwd(user.uid, false);
+        return res.json(new models_1.EmployeeDto(updated));
     }
 }
 exports.EmployeesController = EmployeesController;

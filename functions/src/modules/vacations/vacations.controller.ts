@@ -1,17 +1,28 @@
-import { Request, Response } from 'express';
-import { vacationsService } from './vacations.service';
+import { Request, Response } from "express";
+import { vacationsService } from "./vacations.service";
+import { AppError } from "../../shared/errors/AppError";
 
 export class VacationsController {
   async getAllPending(req: Request, res: Response) {
     const user = req.user;
 
-    if (user.role !== 'CEO') {
-      return res.status(403).json({
-        message: 'Você não tem permissão para consultar férias de todos funcionários.'
-      });
+    if (user.role !== "ADMIN") {
+      throw new AppError("Você não tem permissão para consultar férias de todos funcionários.", 404);
     }
 
     const result = await vacationsService.getAllPendingStatus();
+    return res.json(result);
+  }
+
+  async getAllNotPending(req: Request, res: Response) {
+    const { date } = req.query;
+    const user = req.user;
+
+    if (user.role !== "ADMIN") {
+      throw new AppError("Você não tem permissão para consultar férias de todos funcionários.", 404);
+    }
+
+    const result = await vacationsService.getAllNotPendingStatus(date as string);
     return res.json(result);
   }
 
@@ -27,10 +38,8 @@ export class VacationsController {
     const { employeeId } = req.params;
     const user = req.user;
 
-    if (user.uid !== employeeId && user.role !== 'CEO') {
-      return res.status(403).json({
-        message: 'Você não tem permissão para buscar férias deste funcionário.'
-      });
+    if (user.uid !== employeeId && user.role !== "ADMIN") {
+      throw new AppError("Você não tem permissão para buscar férias deste funcionário.", 404);
     }
 
     const result = await vacationsService.getByEmployeeId(employeeId);
@@ -41,15 +50,11 @@ export class VacationsController {
     const { date } = req.query;
     const user = req.user;
 
-    if (user.role !== 'CEO') {
-      return res.status(403).json({
-        message: 'Você não tem permissão para buscar férias de todos os funcionários.'
-      });
+    if (user.role !== "ADMIN") {
+      throw new AppError("Você não tem permissão para buscar férias de todos os funcionários.", 404);
     }
 
-    const result = await vacationsService.getAllEmployeeVacationsByDate(
-      date as string
-    );
+    const result = await vacationsService.getAllEmployeeVacationsByDate(date as string);
 
     return res.json(result);
   }
@@ -57,10 +62,7 @@ export class VacationsController {
   async getCalendar(req: Request, res: Response) {
     const { startDate, endDate } = req.query;
 
-    const result = await vacationsService.getCalendarSummary(
-      startDate as string,
-      endDate as string
-    );
+    const result = await vacationsService.getCalendarSummary(startDate as string, endDate as string);
 
     return res.json(result);
   }
@@ -69,10 +71,8 @@ export class VacationsController {
     const user = req.user;
     const form = req.body;
 
-    if (user.uid !== form.employeeUid && user.role !== 'CEO') {
-      return res.status(403).json({
-        message: 'Você não tem permissão criar férias para este funcionário.'
-      });
+    if (user.uid !== form.employeeUid && user.role !== "ADMIN") {
+      throw new AppError("Você não tem permissão criar férias para este funcionário.", 404);
     }
 
     await vacationsService.create(form);
@@ -84,10 +84,8 @@ export class VacationsController {
     const user = req.user;
     const form = req.body;
 
-    if (user.uid !== form.employeeUid && user.role !== 'CEO') {
-      return res.status(403).json({
-        message: 'Você não tem permissão para editar férias para este funcionário.'
-      });
+    if (user.uid !== form.employeeUid && user.role !== "ADMIN") {
+      throw new AppError("Você não tem permissão para editar férias para este funcionário.", 404);
     }
 
     await vacationsService.update(id, form);
@@ -98,10 +96,8 @@ export class VacationsController {
     const { id, status } = req.params;
     const user = req.user;
 
-    if (user.role !== 'CEO') {
-      return res.status(403).json({
-        message: 'Você não tem permissão para editar férias para este funcionário.'
-      });
+    if (user.role !== "ADMIN") {
+      throw new AppError("Você não tem permissão para editar férias para este funcionário.", 404);
     }
 
     await vacationsService.updateStatus(id, status);

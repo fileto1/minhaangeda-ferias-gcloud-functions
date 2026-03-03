@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { auth } from "../firebase";
+import { employeesRepository } from "../modules/employees/employees.repository";
 
 /**
  * Usuário autenticado no sistema
@@ -8,7 +9,7 @@ import { auth } from "../firebase";
 export interface AuthenticatedUser {
   uid: string;
   email: string;
-  role: "CEO" | "EMPLOYEE";
+  role: "ADMIN" | "EMPLOYEE";
 }
 
 declare global {
@@ -33,13 +34,44 @@ export async function authenticate(
 
   const token = header.replace("Bearer ", "");
 
+  // try {
+  //   const decoded = await auth.verifyIdToken(token);
+
+  //   const employeeDoc = await db
+  //     .collection(EMPLOYEES_COLLECTION)
+  //     .doc(decoded.uid)
+  //     .get();
+
+  //   if (!employeeDoc.exists) {
+  //     res.status(403).json({ error: "Funcionário não encontrado." });
+  //   }
+
+  //   const employee = employeeDoc.data();
+
+  //   if (employee?.deleted || !employee?.enabled) {
+  //     res.status(403).json({ error: "Usuário desabilitado." });
+  //   }
+
+  //   req.user = {
+  //     uid: decoded.uid,
+  //     email: decoded.email ?? "",
+  //     role: employee.role ?? "EMPLOYEE",
+  //   };
+
+  //   next();
+  // } catch (error) {
+  //   res.status(401).json({ error: "Token inválido" });
+  // }
+
   try {
     const decoded = await auth.verifyIdToken(token);
+    const employee = await employeesRepository.findByUid(decoded.uid);
 
     req.user = {
       uid: decoded.uid,
       email: decoded.email ?? "",
-      role: (decoded.role as "CEO" | "EMPLOYEE") ?? "EMPLOYEE",
+      role: employee?.role ?? "EMPLOYEE",
+      // role: (decoded.role as "ADMIN" | "EMPLOYEE") ?? "EMPLOYEE",
     };
 
     next();

@@ -1,3 +1,12 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
+// import { Timestamp } from "firebase-admin/firestore";
+// export interface Employee {
+//   uid: string;
+//   email: string;
+//   name: string;
+//   role: "ADMIN" | "MANAGER" | "EMPLOYEE";
+//   departmentId?: string;
+//   active: boolean;
+//   createdAt: Timestamp;
+// }
 //# sourceMappingURL=employee.model.js.map

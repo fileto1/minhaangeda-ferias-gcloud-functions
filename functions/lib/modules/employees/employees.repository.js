@@ -1,15 +1,16 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.employeesRepository = void 0;
+exports.employeesRepository = exports.EMPLOYEES_COLLECTION = void 0;
+//employees.repository.ts
 const firestore_1 = require("firebase-admin/firestore");
 const db = (0, firestore_1.getFirestore)();
-const COLLECTION = "employees";
+exports.EMPLOYEES_COLLECTION = "employees";
 class EmployeesRepository {
     /* ===============================
      * BY UID
      * =============================== */
     async findByUid(uid) {
-        const snap = await db.collection(COLLECTION).doc(uid).get();
+        const snap = await db.collection(exports.EMPLOYEES_COLLECTION).doc(uid).get();
         if (!snap.exists)
             return null;
         const data = snap.data();
@@ -25,7 +26,7 @@ class EmployeesRepository {
      * =============================== */
     async findByEmail(email) {
         const snap = await db
-            .collection(COLLECTION)
+            .collection(exports.EMPLOYEES_COLLECTION)
             .where("email", "==", email)
             .where("deleted", "==", false)
             .limit(1)
@@ -43,8 +44,19 @@ class EmployeesRepository {
      * ALL (NOT DELETED)
      * =============================== */
     async findAll() {
+        const snap = await db.collection(exports.EMPLOYEES_COLLECTION).where("deleted", "==", false).get();
+        return snap.docs.map((d) => ({
+            uid: d.id,
+            ...d.data(),
+        }));
+    }
+    /* ===============================
+     * ALL NOT ADMIN
+     * =============================== */
+    async findAllNotAdmin() {
         const snap = await db
-            .collection(COLLECTION)
+            .collection(exports.EMPLOYEES_COLLECTION)
+            .where("role", "!=", "ADMIN")
             .where("deleted", "==", false)
             .get();
         return snap.docs.map((d) => ({
@@ -52,19 +64,22 @@ class EmployeesRepository {
             ...d.data(),
         }));
     }
-    /* ===============================
-     * ALL NOT CEO
-     * =============================== */
-    async findAllNotCeo() {
-        const snap = await db
-            .collection(COLLECTION)
-            .where("ceo", "==", false)
-            .where("deleted", "==", false)
-            .get();
-        return snap.docs.map((d) => ({
-            uid: d.id,
-            ...d.data(),
-        }));
+    async create(uid, data) {
+        const ref = db.collection(exports.EMPLOYEES_COLLECTION).doc(uid);
+        await ref.set(data);
+        return {
+            uid,
+            ...data,
+        };
+    }
+    async update(id, data) {
+        const employeeRef = db.collection(exports.EMPLOYEES_COLLECTION).doc(id);
+        await employeeRef.update({
+            ...data,
+            updatedAt: firestore_1.Timestamp.now(),
+        });
+        const updatedSnapshot = await employeeRef.get();
+        return updatedSnapshot.data();
     }
 }
 exports.employeesRepository = new EmployeesRepository();

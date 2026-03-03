@@ -1,15 +1,16 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { EmployeeVacationEntity } from "./models/EmployeeVacationEntity";
+import { EmployeeVacationStatusEnum, getStatusesExcept } from "./models";
 
 const db = getFirestore();
-const COLLECTION = "vacations";
+export const VACATIONS_COLLECTION = "vacations";
 
 class VacationsRepository {
   /* ===============================
    * FIND BY ID (NOT DELETED)
    * =============================== */
   async findById(id: string): Promise<EmployeeVacationEntity | null> {
-    const snap = await db.collection(COLLECTION).doc(id).get();
+    const snap = await db.collection(VACATIONS_COLLECTION).doc(id).get();
 
     if (!snap.exists) return null;
 
@@ -27,10 +28,10 @@ class VacationsRepository {
    * =============================== */
   async findByEmployee(employeeUid: string): Promise<EmployeeVacationEntity[]> {
     const snap = await db
-      .collection(COLLECTION)
+      .collection(VACATIONS_COLLECTION)
       .where("employeeUid", "==", employeeUid)
       .where("deleted", "==", false)
-      .orderBy("startDate", "desc")
+      .orderBy("startDate", "asc")
       .get();
 
     return snap.docs.map((d) => ({
@@ -44,7 +45,7 @@ class VacationsRepository {
    * =============================== */
   async findAllPending(): Promise<EmployeeVacationEntity[]> {
     const snap = await db
-      .collection(COLLECTION)
+      .collection(VACATIONS_COLLECTION)
       .where("status", "==", "PENDING")
       .where("deleted", "==", false)
       .get();
@@ -56,18 +57,34 @@ class VacationsRepository {
   }
 
   /* ===============================
+   * ALL NOT PENDING
+   * =============================== */
+  async findAllNotPendingByDateRange(start: Timestamp, end: Timestamp): Promise<EmployeeVacationEntity[]> {
+    const statuses = getStatusesExcept(EmployeeVacationStatusEnum.PENDING);
+    const snap = await db
+      .collection(VACATIONS_COLLECTION)
+      .where("deleted", "==", false)
+      .where("status", "in", statuses)
+      .where("startDate", "<=", end)
+      .where("endDate", ">=", start)
+      .get();
+
+    return snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<EmployeeVacationEntity, "id">),
+    }));
+  }
+
+  /* ===============================
    * BY DATE RANGE + STATUS
    * =============================== */
-  async findApprovedByDateRange(
-    startDate: string,
-    endDate: string,
-  ): Promise<EmployeeVacationEntity[]> {
+  async findApprovedByDateRange(start: Timestamp, end: Timestamp): Promise<EmployeeVacationEntity[]> {
     const snap = await db
-      .collection(COLLECTION)
-      .where("endDate", ">=", startDate)
-      .where("startDate", "<=", endDate)
-      .where("status", "==", "APPROVED")
+      .collection(VACATIONS_COLLECTION)
       .where("deleted", "==", false)
+      .where("status", "==", "APPROVED")
+      .where("startDate", "<=", end)
+      .where("endDate", ">=", start)
       .get();
 
     return snap.docs.map((d) => ({
@@ -79,9 +96,9 @@ class VacationsRepository {
   /* ===============================
    * APPROVED UNTIL DATE
    * =============================== */
-  async findApprovedUntil(maxDate: string): Promise<EmployeeVacationEntity[]> {
+  async findApprovedUntil(maxDate: Timestamp): Promise<EmployeeVacationEntity[]> {
     const snap = await db
-      .collection(COLLECTION)
+      .collection(VACATIONS_COLLECTION)
       .where("startDate", "<", maxDate)
       .where("status", "==", "APPROVED")
       .where("deleted", "==", false)
@@ -97,59 +114,60 @@ class VacationsRepository {
   /* ===============================
    * EXISTS IN RANGE
    * =============================== */
-  async existsInRange(
-    startDate: string,
-    endDate: string,
-    employeeUid: string,
-  ): Promise<boolean> {
-    const snap = await db
-      .collection(COLLECTION)
+  // async existsInRange(
+  //   startDate: string,
+  //   endDate: string,
+  //   employeeUid: string,
+  // ): Promise<boolean> {
+  //   const snap = await db
+  //     .collection(VACATIONS_COLLECTION)
+  //     .where("employeeUid", "==", employeeUid)
+  //     .where("endDate", ">=", startDate)
+  //     .where("startDate", "<=", endDate)
+  //     .where("deleted", "==", false)
+  //     .limit(1)
+  //     .get();
+
+  //   return !snap.empty;
+  // }
+  async existsInRange(start: Timestamp, end: Timestamp, employeeUid: string) {
+    const snapshot = await db
+      .collection("vacations")
       .where("employeeUid", "==", employeeUid)
-      .where("endDate", ">=", startDate)
-      .where("startDate", "<=", endDate)
       .where("deleted", "==", false)
-      .limit(1)
+      .where("startDate", "<=", end)
+      .where("endDate", ">=", start)
       .get();
 
-    return !snap.empty;
+    return !snapshot.empty;
   }
 
-  async existsInRangeExcept(
-    startDate: string,
-    endDate: string,
-    employeeUid: string,
-    exceptId: string,
-  ): Promise<boolean> {
+  async existsInRangeExcept(start: Timestamp, end: Timestamp, employeeUid: string, exceptId: string): Promise<boolean> {
     const snap = await db
-      .collection(COLLECTION)
+      .collection(VACATIONS_COLLECTION)
       .where("employeeUid", "==", employeeUid)
-      .where("endDate", ">=", startDate)
-      .where("startDate", "<=", endDate)
       .where("deleted", "==", false)
+      .where("startDate", "<=", end)
+      .where("endDate", ">=", start)
       .get();
 
-    return snap.docs.some((d) => d.id !== exceptId);
+    return snap.docs.some((doc) => doc.id !== exceptId);
   }
 
   /* ===============================
    * CREATE / UPDATE / SOFT DELETE
    * =============================== */
-  async create(
-    data: Omit<EmployeeVacationEntity, "id" | "deleted">,
-  ): Promise<void> {
-    await db.collection(COLLECTION).add({
+  async create(data: Omit<EmployeeVacationEntity, "id" | "deleted">): Promise<void> {
+    await db.collection(VACATIONS_COLLECTION).add({
       ...data,
       deleted: false,
       createdAt: Timestamp.now(),
     });
   }
 
-  async update(
-    id: string,
-    data: Partial<EmployeeVacationEntity>,
-  ): Promise<void> {
+  async update(id: string, data: Partial<EmployeeVacationEntity>): Promise<void> {
     await db
-      .collection(COLLECTION)
+      .collection(VACATIONS_COLLECTION)
       .doc(id)
       .update({
         ...data,
@@ -158,7 +176,7 @@ class VacationsRepository {
   }
 
   async delete(id: string): Promise<void> {
-    await db.collection(COLLECTION).doc(id).update({
+    await db.collection(VACATIONS_COLLECTION).doc(id).update({
       deleted: true,
       deletedAt: Timestamp.now(),
     });

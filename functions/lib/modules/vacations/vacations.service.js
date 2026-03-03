@@ -10,6 +10,11 @@ const employees_repository_1 = require("../employees/employees.repository");
 const models_1 = require("./models");
 const holidays_service_1 = require("../holidays/holidays.service");
 const models_2 = require("../employees/models");
+const date_utils_1 = require("../../shared/utils/date.utils");
+const firestore_1 = require("firebase-admin/firestore");
+const HolidayDto_1 = require("../holidays/models/HolidayDto");
+const AppError_1 = require("../../shared/errors/AppError");
+// import { Timestamp } from "firebase-admin/firestore";
 exports.VACATION_DAYS_IN_A_YEAR = 20;
 exports.FIRST_YEAR_TO_COUNT = 2025;
 class VacationsService {
@@ -21,12 +26,28 @@ class VacationsService {
         return vacations.map((v) => new models_1.EmployeeVacationItemDTO(v, 0));
     }
     /* =====================================================
+     * GET ALL NOT PENDING
+     * ===================================================== */
+    async getAllNotPendingStatus(date) {
+        const targetYear = (0, dayjs_1.default)(date).year();
+        if (targetYear < exports.FIRST_YEAR_TO_COUNT) {
+            throw new AppError_1.AppError(`Não é possível buscar para ano anterior a: ${exports.FIRST_YEAR_TO_COUNT}`);
+        }
+        const startDate = date_utils_1.DateUtils.toTimestamp((0, dayjs_1.default)(`${targetYear}-01-01`));
+        const maxDate = date_utils_1.DateUtils.toTimestamp((0, dayjs_1.default)(`${targetYear}-12-31`));
+        console.log("START:", startDate.toDate());
+        console.log("END:", maxDate.toDate());
+        const vacations = await vacations_repository_1.vacationsRepository.findAllNotPendingByDateRange(startDate, maxDate);
+        return vacations.map((v) => new models_1.EmployeeVacationItemDTO(v, 0));
+    }
+    /* =====================================================
      * CALENDAR
      * ===================================================== */
     async getCalendarSummary(startDate, endDate) {
-        const vacations = await vacations_repository_1.vacationsRepository.findApprovedByDateRange(startDate, endDate);
-        const holidays = await holidays_service_1.holidaysService.findByDateRange(startDate, endDate, "PT_BR");
-        return new models_1.CalendarSummaryResponseDTO(vacations.map((v) => new models_1.EmployeeVacationItemDTO(v, 0)), holidays);
+        const { start, end } = date_utils_1.DateUtils.toRange(startDate, endDate);
+        const vacations = await vacations_repository_1.vacationsRepository.findApprovedByDateRange(start, end);
+        const holidays = await holidays_service_1.holidaysService.findByDateRange(start, end, "PT_BR");
+        return new models_1.CalendarSummaryResponseDTO(vacations.map((v) => new models_1.EmployeeVacationItemDTO(v, 0)), holidays.map((v) => new HolidayDto_1.HolidayDto(v)));
     }
     /* =====================================================
      * GET BY ID
@@ -34,10 +55,10 @@ class VacationsService {
     async getById(id, user) {
         const vacation = await vacations_repository_1.vacationsRepository.findById(id);
         if (!vacation) {
-            throw new Error("Férias não encontrada");
+            throw new AppError_1.AppError("Férias não encontrada", 404);
         }
-        if (vacation.employeeUid !== user.uid && user.role !== "CEO") {
-            throw new Error("Você não tem permissão para buscar as férias deste funcionário.");
+        if (vacation.employeeUid !== user.uid && user.role !== "ADMIN") {
+            throw new AppError_1.AppError("Você não tem permissão para buscar as férias deste funcionário.");
         }
         return vacation;
     }
@@ -46,13 +67,13 @@ class VacationsService {
      * ===================================================== */
     async getAllEmployeeVacationsByDate(date) {
         const targetYear = (0, dayjs_1.default)(date).year();
+        console.log("date:", date);
+        console.log("targetYear:", targetYear);
         if (targetYear < exports.FIRST_YEAR_TO_COUNT) {
-            throw new Error(`Não é possível buscar para ano anterior a: ${exports.FIRST_YEAR_TO_COUNT}`);
+            throw new AppError_1.AppError(`Não é possível buscar para ano anterior a: ${exports.FIRST_YEAR_TO_COUNT}`);
         }
-        const employees = await employees_repository_1.employeesRepository.findAllNotCeo();
-        const maxDate = (0, dayjs_1.default)(`${targetYear}-12-31`)
-            .add(1, "year")
-            .format("YYYY-MM-DD");
+        const employees = await employees_repository_1.employeesRepository.findAllNotAdmin();
+        const maxDate = date_utils_1.DateUtils.toTimestamp((0, dayjs_1.default)(`${targetYear}-12-31`).add(1, "year"));
         const vacations = await vacations_repository_1.vacationsRepository.findApprovedUntil(maxDate);
         const vacationsByEmployee = new Map();
         vacations.forEach((v) => {
@@ -76,17 +97,20 @@ class VacationsService {
     async getByEmployeeId(employeeUid) {
         const employee = await employees_repository_1.employeesRepository.findByUid(employeeUid);
         if (!employee?.hiringDate) {
-            throw new Error("Necessário configurar data de contratação antes de buscar férias.");
+            throw new AppError_1.AppError("Necessário configurar data de contratação antes de buscar férias.");
         }
-        const currentYear = (0, dayjs_1.default)().year();
+        const currentYearPlusOne = (0, dayjs_1.default)().year() + 1;
         const yearControl = new Map();
-        for (let year = exports.FIRST_YEAR_TO_COUNT; year <= currentYear; year++) {
+        // set the firstYearToGet to not be more than 6 years ago
+        const firstYearToGet = currentYearPlusOne - exports.FIRST_YEAR_TO_COUNT > 6 ? currentYearPlusOne - 6 : exports.FIRST_YEAR_TO_COUNT;
+        for (let year = firstYearToGet; year <= currentYearPlusOne; year++) {
             yearControl.set(year, { year, usedDays: 0, vacations: [] });
         }
         const vacations = await vacations_repository_1.vacationsRepository.findByEmployee(employeeUid);
         for (const vacation of vacations) {
             const holidays = await holidays_service_1.holidaysService.findByDateRange(vacation.startDate, vacation.endDate, "PT_BR");
             let businessDays = this.calculateBusinessDays(vacation.startDate, vacation.endDate, holidays);
+            const realBusinessDays = Number(businessDays);
             for (const control of yearControl.values()) {
                 if (businessDays <= 0)
                     break;
@@ -95,11 +119,13 @@ class VacationsService {
                     continue;
                 const toUse = Math.min(businessDays, available);
                 control.usedDays += toUse;
-                control.vacations.push(new models_1.EmployeeVacationItemDTO(vacation, toUse));
+                const splited = realBusinessDays !== toUse;
+                control.vacations.push(new models_1.EmployeeVacationItemDTO(vacation, toUse, splited));
                 businessDays -= toUse;
             }
         }
         return Array.from(yearControl.values())
+            .filter((year) => year.vacations.length > 0)
             .map((c) => new models_1.EmployeeVacationsResponseDTO(exports.VACATION_DAYS_IN_A_YEAR - c.usedDays, c.usedDays, String(c.year), c.vacations))
             .sort((a, b) => Number(b.referenceYear) - Number(a.referenceYear));
     }
@@ -108,89 +134,124 @@ class VacationsService {
      * ===================================================== */
     async create(form) {
         const employee = await employees_repository_1.employeesRepository.findByUid(form.employeeUid);
-        if (!employee)
-            throw new Error("Funcionário não encontrado");
-        const exists = await vacations_repository_1.vacationsRepository.existsInRange(form.startDate, form.endDate, form.employeeUid);
-        if (exists) {
-            throw new Error("Já existe férias no período selecionado.");
+        if (!employee) {
+            throw new AppError_1.AppError("Funcionário não encontrado", 404);
         }
-        const days = this.validateForm(form, employee.hiringDate);
-        const businessDays = await this.getBusinessDays(form);
+        const { start, end } = date_utils_1.DateUtils.toRange(form.startDate, form.endDate);
+        // 🔥 Verificar conflito agora usando Timestamp
+        const exists = await vacations_repository_1.vacationsRepository.existsInRange(start, end, form.employeeUid);
+        if (exists) {
+            throw new AppError_1.AppError("Já existe férias no período selecionado.");
+        }
+        // 🔥 Validar datas
+        const days = this.validateForm(start, end, employee.hiringDate);
+        const businessDays = await this.getBusinessDays(start, end);
         await vacations_repository_1.vacationsRepository.create({
-            ...form,
+            employeeUid: employee.uid,
+            employeeName: employee.name,
+            startDate: start,
+            endDate: end,
+            notes: form.notes,
             daysQuantity: days,
             balanceUsedDays: businessDays,
             status: models_1.EmployeeVacationStatusEnum.PENDING,
+            createdAt: firestore_1.Timestamp.now(),
         });
     }
     async update(id, form) {
         const vacation = await vacations_repository_1.vacationsRepository.findById(id);
-        if (!vacation)
-            throw new Error("Férias não encontrada");
-        const employee = await employees_repository_1.employeesRepository.findByUid(form.employeeUid);
-        if (!employee)
-            throw new Error("Funcionário não encontrado");
-        const exists = await vacations_repository_1.vacationsRepository.existsInRangeExcept(form.startDate, form.endDate, form.employeeUid, id);
-        if (exists) {
-            throw new Error("Já existe férias no período selecionado.");
+        if (!vacation) {
+            throw new AppError_1.AppError("Férias não encontrada", 404);
         }
-        const days = this.validateForm(form, employee.hiringDate);
-        const businessDays = await this.getBusinessDays(form);
+        const employee = await employees_repository_1.employeesRepository.findByUid(form.employeeUid);
+        if (!employee) {
+            throw new AppError_1.AppError("Funcionário não encontrado", 404);
+        }
+        const isNotSameStartDate = !date_utils_1.DateUtils.isSameTimestamp(date_utils_1.DateUtils.toTimestamp(form.startDate), vacation.startDate);
+        const isNotSameEndDate = !date_utils_1.DateUtils.isSameTimestamp(date_utils_1.DateUtils.toTimestamp(form.endDate), vacation.endDate);
+        if (employee.role != "ADMIN" &&
+            vacation.status == models_1.EmployeeVacationStatusEnum.APPROVED &&
+            (isNotSameStartDate || isNotSameEndDate)) {
+            throw new AppError_1.AppError("Não é possível alterar período após a férias ter sido aprovada. Por favor contate o Admin.");
+        }
+        const { start, end } = date_utils_1.DateUtils.toRange(form.startDate, form.endDate);
+        // 🔥 Verificar conflito excluindo o próprio registro
+        const exists = await vacations_repository_1.vacationsRepository.existsInRangeExcept(start, end, form.employeeUid, id);
+        if (exists) {
+            throw new AppError_1.AppError("Já existe férias no período selecionado.");
+        }
+        // 🔥 Validar datas
+        const days = this.validateForm(start, end, employee.hiringDate);
+        const businessDays = await this.getBusinessDays(start, end);
         await vacations_repository_1.vacationsRepository.update(id, {
-            ...form,
+            startDate: start,
+            endDate: end,
+            notes: form.notes,
             daysQuantity: days,
             balanceUsedDays: businessDays,
-            status: models_1.EmployeeVacationStatusEnum.PENDING,
+            updatedAt: firestore_1.Timestamp.now(),
         });
     }
     async updateStatus(id, status) {
         const newStatus = (0, models_1.vacationStatusFromString)(status);
         if (newStatus == null) {
-            throw new Error(`Status inválido: ${status}`);
+            throw new AppError_1.AppError(`Status inválido: ${status}`);
         }
         await vacations_repository_1.vacationsRepository.update(id, { status: newStatus });
     }
     async delete(id, user) {
         const vacation = await vacations_repository_1.vacationsRepository.findById(id);
         if (!vacation)
-            throw new Error("Férias não encontrada");
-        if (vacation.status === "APPROVED" && user.role !== "CEO") {
-            throw new Error("Você não pode deletar férias aprovadas.");
+            throw new AppError_1.AppError("Férias não encontrada", 404);
+        if (vacation.status === "APPROVED" && user.role !== "ADMIN") {
+            throw new AppError_1.AppError("Você não pode deletar férias aprovadas.");
         }
-        if (vacation.employeeUid !== user.uid && user.role !== "CEO") {
-            throw new Error("Sem permissão para deletar férias.");
+        if (vacation.employeeUid !== user.uid && user.role !== "ADMIN") {
+            throw new AppError_1.AppError("Sem permissão para deletar férias.");
         }
         await vacations_repository_1.vacationsRepository.delete(id);
     }
     /* =====================================================
      * HELPERS
      * ===================================================== */
-    validateForm(form, hiringDate) {
-        const start = (0, dayjs_1.default)(form.startDate);
-        const end = (0, dayjs_1.default)(form.endDate);
-        if (start.isBefore(hiringDate)) {
-            throw new Error("Data início inferior à contratação.");
+    validateForm(start, end, hiringDate) {
+        // private validateForm(
+        //   form: EmployeeVacationItemFormRequest,
+        //   hiringDate: Timestamp | undefined,
+        // ) {
+        if (!hiringDate) {
+            throw new AppError_1.AppError("Data de contratação não encontrada.");
         }
-        if (!end.isAfter(start)) {
-            throw new Error("Data fim inválida.");
+        const startDate = date_utils_1.DateUtils.toDayjsStartOfDay(start);
+        const endDate = date_utils_1.DateUtils.toDayjsStartOfDay(end);
+        const hiring = date_utils_1.DateUtils.toDayjsStartOfDay(hiringDate);
+        if (startDate.isBefore(hiring)) {
+            throw new AppError_1.AppError("Data início inferior à contratação.");
         }
-        const days = end.diff(start, "day") + 1;
+        if (!endDate.isAfter(startDate)) {
+            throw new AppError_1.AppError("Data fim inválida.");
+        }
+        const days = endDate.diff(startDate, "day") + 1;
         if (days > 60) {
-            throw new Error("Intervalo maior que 60 dias.");
+            throw new AppError_1.AppError("Intervalo maior que 60 dias.");
         }
         return days;
     }
-    async getBusinessDays(form) {
-        const holidays = await holidays_service_1.holidaysService.findByDateRange(form.startDate, form.endDate, "PT_BR");
-        return this.calculateBusinessDays(form.startDate, form.endDate, holidays);
+    async getBusinessDays(start, end) {
+        const holidays = await holidays_service_1.holidaysService.findByDateRange(start, end, "PT_BR");
+        return this.calculateBusinessDays(start, end, holidays);
     }
-    calculateBusinessDays(startDate, endDate, holidays) {
-        const start = (0, dayjs_1.default)(startDate);
-        const end = (0, dayjs_1.default)(endDate);
+    calculateBusinessDays(startTimestamp, endTimestamp, holidays) {
+        const start = date_utils_1.DateUtils.toDayjsStartOfDay(startTimestamp);
+        const end = date_utils_1.DateUtils.toDayjsStartOfDay(endTimestamp);
+        // 🔥 Normalizar feriados como YYYY-MM-DD
         const holidaySet = new Set();
-        holidays.forEach((h) => holidaySet.add(h.date));
+        holidays.forEach((h) => {
+            const holidayDate = (0, dayjs_1.default)(h.date?.toDate ? h.date.toDate() : h.date).format("YYYY-MM-DD");
+            holidaySet.add(holidayDate);
+        });
         let count = 0;
-        for (let d = start.clone(); d.isSameOrBefore(end); d = d.add(1, "day")) {
+        for (let d = start.clone(); d.isSameOrBefore(end, "day"); d = d.add(1, "day")) {
             const weekend = d.day() === 0 || d.day() === 6;
             if (!weekend && !holidaySet.has(d.format("YYYY-MM-DD"))) {
                 count++;
@@ -205,9 +266,10 @@ class VacationsService {
             usedDaysMap[year] = 0;
         }
         // Ordena por startDate
-        vacations.sort((a, b) => a.startDate.localeCompare(b.startDate));
+        // vacations.sort((a, b) => a.startDate.localeCompare(b.startDate));
+        vacations.sort((a, b) => a.startDate.toMillis() - b.startDate.toMillis());
         for (const vacation of vacations) {
-            const holidays = await holidays_service_1.holidaysService.findByDateRange(vacation.startDate, vacation.endDate, 'PT_BR');
+            const holidays = await holidays_service_1.holidaysService.findByDateRange(vacation.startDate, vacation.endDate, "PT_BR");
             let businessDays = this.calculateBusinessDays(vacation.startDate, vacation.endDate, holidays);
             for (const year of Object.keys(usedDaysMap).map(Number)) {
                 if (businessDays <= 0) {

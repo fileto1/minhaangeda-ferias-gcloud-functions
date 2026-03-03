@@ -13,6 +13,11 @@ import {
 } from "./models";
 import { holidaysService } from "../holidays/holidays.service";
 import { EmployeeDto } from "../employees/models";
+import { DateUtils } from "../../shared/utils/date.utils";
+import { Timestamp } from "firebase-admin/firestore";
+import { HolidayDto } from "../holidays/models/HolidayDto";
+import { AppError } from "../../shared/errors/AppError";
+// import { Timestamp } from "firebase-admin/firestore";
 
 export const VACATION_DAYS_IN_A_YEAR = 20;
 export const FIRST_YEAR_TO_COUNT = 2025;
@@ -27,26 +32,38 @@ class VacationsService {
   }
 
   /* =====================================================
+   * GET ALL NOT PENDING
+   * ===================================================== */
+  async getAllNotPendingStatus(date: string): Promise<EmployeeVacationItemDTO[]> {
+    const targetYear = dayjs(date).year();
+
+    if (targetYear < FIRST_YEAR_TO_COUNT) {
+      throw new AppError(`Não é possível buscar para ano anterior a: ${FIRST_YEAR_TO_COUNT}`);
+    }
+
+    const startDate = DateUtils.toTimestamp(dayjs(`${targetYear}-01-01`));
+    const maxDate = DateUtils.toTimestamp(dayjs(`${targetYear}-12-31`));
+
+    console.log("START:", startDate.toDate());
+    console.log("END:", maxDate.toDate());
+
+    const vacations = await vacationsRepository.findAllNotPendingByDateRange(startDate, maxDate);
+    return vacations.map((v) => new EmployeeVacationItemDTO(v, 0));
+  }
+
+  /* =====================================================
    * CALENDAR
    * ===================================================== */
-  async getCalendarSummary(
-    startDate: string,
-    endDate: string,
-  ): Promise<CalendarSummaryResponseDTO> {
-    const vacations = await vacationsRepository.findApprovedByDateRange(
-      startDate,
-      endDate,
-    );
+  async getCalendarSummary(startDate: string, endDate: string): Promise<CalendarSummaryResponseDTO> {
+    const { start, end } = DateUtils.toRange(startDate, endDate);
 
-    const holidays = await holidaysService.findByDateRange(
-      startDate,
-      endDate,
-      "PT_BR",
-    );
+    const vacations = await vacationsRepository.findApprovedByDateRange(start, end);
+
+    const holidays = await holidaysService.findByDateRange(start, end, "PT_BR");
 
     return new CalendarSummaryResponseDTO(
       vacations.map((v) => new EmployeeVacationItemDTO(v, 0)),
-      holidays,
+      holidays.map((v) => new HolidayDto(v)),
     );
   }
 
@@ -57,13 +74,11 @@ class VacationsService {
     const vacation = await vacationsRepository.findById(id);
 
     if (!vacation) {
-      throw new Error("Férias não encontrada");
+      throw new AppError("Férias não encontrada", 404);
     }
 
-    if (vacation.employeeUid !== user.uid && user.role !== "CEO") {
-      throw new Error(
-        "Você não tem permissão para buscar as férias deste funcionário.",
-      );
+    if (vacation.employeeUid !== user.uid && user.role !== "ADMIN") {
+      throw new AppError("Você não tem permissão para buscar as férias deste funcionário.");
     }
 
     return vacation;
@@ -72,21 +87,17 @@ class VacationsService {
   /* =====================================================
    * BALANCE BY YEAR
    * ===================================================== */
-  async getAllEmployeeVacationsByDate(
-    date: string,
-  ): Promise<EmployeeBalanceVacationsResponseDTO[]> {
+  async getAllEmployeeVacationsByDate(date: string): Promise<EmployeeBalanceVacationsResponseDTO[]> {
     const targetYear = dayjs(date).year();
+    console.log("date:", date);
+    console.log("targetYear:", targetYear);
 
     if (targetYear < FIRST_YEAR_TO_COUNT) {
-      throw new Error(
-        `Não é possível buscar para ano anterior a: ${FIRST_YEAR_TO_COUNT}`,
-      );
+      throw new AppError(`Não é possível buscar para ano anterior a: ${FIRST_YEAR_TO_COUNT}`);
     }
 
-    const employees = await employeesRepository.findAllNotCeo();
-    const maxDate = dayjs(`${targetYear}-12-31`)
-      .add(1, "year")
-      .format("YYYY-MM-DD");
+    const employees = await employeesRepository.findAllNotAdmin();
+    const maxDate = DateUtils.toTimestamp(dayjs(`${targetYear}-12-31`).add(1, "year"));
 
     const vacations = await vacationsRepository.findApprovedUntil(maxDate);
 
@@ -103,21 +114,13 @@ class VacationsService {
     for (const employee of employees) {
       const employeeVacations = vacationsByEmployee.get(employee.uid) ?? [];
 
-      const usedDaysMap = await this.calculateUsedDaysPerYearFromList(
-        employeeVacations,
-        targetYear,
-      );
+      const usedDaysMap = await this.calculateUsedDaysPerYearFromList(employeeVacations, targetYear);
 
       const usedDays = usedDaysMap[targetYear] ?? 0;
       const remaining = VACATION_DAYS_IN_A_YEAR - usedDays;
 
       response.push(
-        new EmployeeBalanceVacationsResponseDTO(
-          remaining,
-          usedDays,
-          String(targetYear),
-          new EmployeeDto(employee)
-        ),
+        new EmployeeBalanceVacationsResponseDTO(remaining, usedDays, String(targetYear), new EmployeeDto(employee)),
       );
     }
 
@@ -127,38 +130,29 @@ class VacationsService {
   /* =====================================================
    * BY EMPLOYEE
    * ===================================================== */
-  async getByEmployeeId(
-    employeeUid: string,
-  ): Promise<EmployeeVacationsResponseDTO[]> {
+  async getByEmployeeId(employeeUid: string): Promise<EmployeeVacationsResponseDTO[]> {
     const employee = await employeesRepository.findByUid(employeeUid);
 
     if (!employee?.hiringDate) {
-      throw new Error(
-        "Necessário configurar data de contratação antes de buscar férias.",
-      );
+      throw new AppError("Necessário configurar data de contratação antes de buscar férias.");
     }
 
-    const currentYear = dayjs().year();
+    const currentYearPlusOne = dayjs().year() + 1;
     const yearControl = new Map<number, any>();
+    // set the firstYearToGet to not be more than 6 years ago
+    const firstYearToGet = currentYearPlusOne - FIRST_YEAR_TO_COUNT > 6 ? currentYearPlusOne - 6 : FIRST_YEAR_TO_COUNT;
 
-    for (let year = FIRST_YEAR_TO_COUNT; year <= currentYear; year++) {
+    for (let year = firstYearToGet; year <= currentYearPlusOne; year++) {
       yearControl.set(year, { year, usedDays: 0, vacations: [] });
     }
 
     const vacations = await vacationsRepository.findByEmployee(employeeUid);
 
     for (const vacation of vacations) {
-      const holidays = await holidaysService.findByDateRange(
-        vacation.startDate,
-        vacation.endDate,
-        "PT_BR",
-      );
+      const holidays = await holidaysService.findByDateRange(vacation.startDate, vacation.endDate, "PT_BR");
 
-      let businessDays = this.calculateBusinessDays(
-        vacation.startDate,
-        vacation.endDate,
-        holidays,
-      );
+      let businessDays = this.calculateBusinessDays(vacation.startDate, vacation.endDate, holidays);
+      const realBusinessDays = Number(businessDays);
 
       for (const control of yearControl.values()) {
         if (businessDays <= 0) break;
@@ -168,12 +162,14 @@ class VacationsService {
 
         const toUse = Math.min(businessDays, available);
         control.usedDays += toUse;
-        control.vacations.push(new EmployeeVacationItemDTO(vacation, toUse));
+        const splited = realBusinessDays !== toUse;
+        control.vacations.push(new EmployeeVacationItemDTO(vacation, toUse, splited));
         businessDays -= toUse;
       }
     }
 
     return Array.from(yearControl.values())
+      .filter((year) => year.vacations.length > 0)
       .map(
         (c) =>
           new EmployeeVacationsResponseDTO(
@@ -192,77 +188,102 @@ class VacationsService {
   async create(form: EmployeeVacationItemFormRequest) {
     const employee = await employeesRepository.findByUid(form.employeeUid);
 
-    if (!employee) throw new Error("Funcionário não encontrado");
-
-    const exists = await vacationsRepository.existsInRange(
-      form.startDate,
-      form.endDate,
-      form.employeeUid,
-    );
-
-    if (exists) {
-      throw new Error("Já existe férias no período selecionado.");
+    if (!employee) {
+      throw new AppError("Funcionário não encontrado", 404);
     }
 
-    const days = this.validateForm(form, employee.hiringDate);
-    const businessDays = await this.getBusinessDays(form);
+    const { start, end } = DateUtils.toRange(form.startDate, form.endDate);
+
+    // 🔥 Verificar conflito agora usando Timestamp
+    const exists = await vacationsRepository.existsInRange(start, end, form.employeeUid);
+
+    if (exists) {
+      throw new AppError("Já existe férias no período selecionado.");
+    }
+
+    // 🔥 Validar datas
+    const days = this.validateForm(start, end, employee.hiringDate);
+
+    const businessDays = await this.getBusinessDays(start, end);
 
     await vacationsRepository.create({
-      ...form,
+      employeeUid: employee.uid,
+      employeeName: employee.name,
+      startDate: start,
+      endDate: end,
+      notes: form.notes,
       daysQuantity: days,
       balanceUsedDays: businessDays,
       status: EmployeeVacationStatusEnum.PENDING,
+      createdAt: Timestamp.now(),
     });
   }
 
   async update(id: string, form: EmployeeVacationItemFormRequest) {
     const vacation = await vacationsRepository.findById(id);
-    if (!vacation) throw new Error("Férias não encontrada");
-
-    const employee = await employeesRepository.findByUid(form.employeeUid);
-    if (!employee) throw new Error("Funcionário não encontrado");
-
-    const exists = await vacationsRepository.existsInRangeExcept(
-      form.startDate,
-      form.endDate,
-      form.employeeUid,
-      id,
-    );
-
-    if (exists) {
-      throw new Error("Já existe férias no período selecionado.");
+    if (!vacation) {
+      throw new AppError("Férias não encontrada", 404);
     }
 
-    const days = this.validateForm(form, employee.hiringDate);
-    const businessDays = await this.getBusinessDays(form);
+    const employee = await employeesRepository.findByUid(form.employeeUid);
+    if (!employee) {
+      throw new AppError("Funcionário não encontrado", 404);
+    }
+
+    const isNotSameStartDate = !DateUtils.isSameTimestamp(DateUtils.toTimestamp(form.startDate), vacation.startDate);
+    const isNotSameEndDate = !DateUtils.isSameTimestamp(DateUtils.toTimestamp(form.endDate), vacation.endDate);
+
+    if (
+      employee.role != "ADMIN" &&
+      vacation.status == EmployeeVacationStatusEnum.APPROVED &&
+      (isNotSameStartDate || isNotSameEndDate)
+    ) {
+      throw new AppError("Não é possível alterar período após a férias ter sido aprovada. Por favor contate o Admin.");
+    }
+
+    const { start, end } = DateUtils.toRange(form.startDate, form.endDate);
+
+    // 🔥 Verificar conflito excluindo o próprio registro
+    const exists = await vacationsRepository.existsInRangeExcept(start, end, form.employeeUid, id);
+
+    if (exists) {
+      throw new AppError("Já existe férias no período selecionado.");
+    }
+
+    // 🔥 Validar datas
+    const days = this.validateForm(start, end, employee.hiringDate);
+
+    const businessDays = await this.getBusinessDays(start, end);
 
     await vacationsRepository.update(id, {
-      ...form,
+      startDate: start,
+      endDate: end,
+      notes: form.notes,
       daysQuantity: days,
       balanceUsedDays: businessDays,
-      status: EmployeeVacationStatusEnum.PENDING,
+      updatedAt: Timestamp.now(),
     });
   }
 
   async updateStatus(id: string, status: string) {
     const newStatus = vacationStatusFromString(status);
     if (newStatus == null) {
-      throw new Error(`Status inválido: ${status}`);
+      throw new AppError(`Status inválido: ${status}`);
     }
 
-    await vacationsRepository.update(id, { status: newStatus});
+    await vacationsRepository.update(id, { status: newStatus });
   }
 
   async delete(id: string, user: AuthenticatedUser) {
     const vacation = await vacationsRepository.findById(id);
-    if (!vacation) throw new Error("Férias não encontrada");
+    if (!vacation) throw new AppError("Férias não encontrada", 404);
 
-    if (vacation.status === "APPROVED" && user.role !== "CEO") {
-      throw new Error("Você não pode deletar férias aprovadas.");
+    if (vacation.status === "APPROVED" && user.role !== "ADMIN") {
+      throw new AppError("Você não pode deletar férias aprovadas.");
     }
 
-    if (vacation.employeeUid !== user.uid && user.role !== "CEO") {
-      throw new Error("Sem permissão para deletar férias.");
+    if (vacation.employeeUid !== user.uid && user.role !== "ADMIN") {
+      throw new AppError("Sem permissão para deletar férias.");
     }
 
     await vacationsRepository.delete(id);
@@ -271,54 +292,59 @@ class VacationsService {
   /* =====================================================
    * HELPERS
    * ===================================================== */
-  private validateForm(
-    form: EmployeeVacationItemFormRequest,
-    hiringDate: string | undefined,
-  ) {
-    const start = dayjs(form.startDate);
-    const end = dayjs(form.endDate);
-
-    if (start.isBefore(hiringDate)) {
-      throw new Error("Data início inferior à contratação.");
+  private validateForm(start: Timestamp, end: Timestamp, hiringDate?: Timestamp) {
+    // private validateForm(
+    //   form: EmployeeVacationItemFormRequest,
+    //   hiringDate: Timestamp | undefined,
+    // ) {
+    if (!hiringDate) {
+      throw new AppError("Data de contratação não encontrada.");
     }
 
-    if (!end.isAfter(start)) {
-      throw new Error("Data fim inválida.");
+    const startDate = DateUtils.toDayjsStartOfDay(start);
+    const endDate = DateUtils.toDayjsStartOfDay(end);
+    const hiring = DateUtils.toDayjsStartOfDay(hiringDate);
+
+    if (startDate.isBefore(hiring)) {
+      throw new AppError("Data início inferior à contratação.");
     }
 
-    const days = end.diff(start, "day") + 1;
+    if (!endDate.isAfter(startDate)) {
+      throw new AppError("Data fim inválida.");
+    }
+
+    const days = endDate.diff(startDate, "day") + 1;
     if (days > 60) {
-      throw new Error("Intervalo maior que 60 dias.");
+      throw new AppError("Intervalo maior que 60 dias.");
     }
 
     return days;
   }
 
-  private async getBusinessDays(form: EmployeeVacationItemFormRequest) {
-    const holidays = await holidaysService.findByDateRange(
-      form.startDate,
-      form.endDate,
-      "PT_BR",
-    );
+  private async getBusinessDays(start: Timestamp, end: Timestamp) {
+    const holidays = await holidaysService.findByDateRange(start, end, "PT_BR");
 
-    return this.calculateBusinessDays(form.startDate, form.endDate, holidays);
+    return this.calculateBusinessDays(start, end, holidays);
   }
 
-  private calculateBusinessDays(
-    startDate: string,
-    endDate: string,
-    holidays: any[],
-  ) {
-    const start = dayjs(startDate);
-    const end = dayjs(endDate);
+  private calculateBusinessDays(startTimestamp: Timestamp, endTimestamp: Timestamp, holidays: any[]) {
+    const start = DateUtils.toDayjsStartOfDay(startTimestamp);
+    const end = DateUtils.toDayjsStartOfDay(endTimestamp);
 
+    // 🔥 Normalizar feriados como YYYY-MM-DD
     const holidaySet = new Set<string>();
-    holidays.forEach((h) => holidaySet.add(h.date));
+
+    holidays.forEach((h) => {
+      const holidayDate = dayjs(h.date?.toDate ? h.date.toDate() : h.date).format("YYYY-MM-DD");
+
+      holidaySet.add(holidayDate);
+    });
 
     let count = 0;
 
-    for (let d = start.clone(); d.isSameOrBefore(end); d = d.add(1, "day")) {
+    for (let d = start.clone(); d.isSameOrBefore(end, "day"); d = d.add(1, "day")) {
       const weekend = d.day() === 0 || d.day() === 6;
+
       if (!weekend && !holidaySet.has(d.format("YYYY-MM-DD"))) {
         count++;
       }
@@ -328,58 +354,46 @@ class VacationsService {
   }
 
   private async calculateUsedDaysPerYearFromList(
-  vacations: any[],
-  targetYear: number
-): Promise<Record<number, number>> {
+    vacations: any[],
+    targetYear: number,
+  ): Promise<Record<number, number>> {
+    const usedDaysMap: Record<number, number> = {};
 
-  const usedDaysMap: Record<number, number> = {};
-
-  // Inicializa anos
-  for (let year = FIRST_YEAR_TO_COUNT; year <= targetYear; year++) {
-    usedDaysMap[year] = 0;
-  }
-
-  // Ordena por startDate
-  vacations.sort((a, b) =>
-    a.startDate.localeCompare(b.startDate)
-  );
-
-  for (const vacation of vacations) {
-
-    const holidays = await holidaysService.findByDateRange(
-      vacation.startDate,
-      vacation.endDate,
-      'PT_BR'
-    );
-
-    let businessDays = this.calculateBusinessDays(
-      vacation.startDate,
-      vacation.endDate,
-      holidays
-    );
-
-    for (const year of Object.keys(usedDaysMap).map(Number)) {
-
-      if (businessDays <= 0) {
-        break;
-      }
-
-      const used = usedDaysMap[year];
-      const available = VACATION_DAYS_IN_A_YEAR - used;
-
-      if (available <= 0) {
-        continue;
-      }
-
-      const toUse = Math.min(businessDays, available);
-
-      usedDaysMap[year] = used + toUse;
-      businessDays -= toUse;
+    // Inicializa anos
+    for (let year = FIRST_YEAR_TO_COUNT; year <= targetYear; year++) {
+      usedDaysMap[year] = 0;
     }
-  }
 
-  return usedDaysMap;
-}
+    // Ordena por startDate
+    // vacations.sort((a, b) => a.startDate.localeCompare(b.startDate));
+    vacations.sort((a, b) => a.startDate.toMillis() - b.startDate.toMillis());
+
+    for (const vacation of vacations) {
+      const holidays = await holidaysService.findByDateRange(vacation.startDate, vacation.endDate, "PT_BR");
+
+      let businessDays = this.calculateBusinessDays(vacation.startDate, vacation.endDate, holidays);
+
+      for (const year of Object.keys(usedDaysMap).map(Number)) {
+        if (businessDays <= 0) {
+          break;
+        }
+
+        const used = usedDaysMap[year];
+        const available = VACATION_DAYS_IN_A_YEAR - used;
+
+        if (available <= 0) {
+          continue;
+        }
+
+        const toUse = Math.min(businessDays, available);
+
+        usedDaysMap[year] = used + toUse;
+        businessDays -= toUse;
+      }
+    }
+
+    return usedDaysMap;
+  }
 }
 
 export const vacationsService = new VacationsService();

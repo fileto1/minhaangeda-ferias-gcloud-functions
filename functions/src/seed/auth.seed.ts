@@ -1,28 +1,37 @@
+import dayjs from "dayjs";
 import { auth, db } from "../firebase";
+import { EMPLOYEES_COLLECTION } from "../modules/employees/employees.repository";
 import { EmployeeEntity } from "../modules/employees/models/EmployeeEntity";
+import { DateUtils } from "../shared/utils/date.utils";
 
 type SeedUser = {
   email: string;
   password: string;
   name: string;
   role: any;
-  ceo: boolean;
+  forceResetPassword: boolean;
+  birthDate: Date;
+  hiringDate: Date;
 };
 
 const USERS: SeedUser[] = [
   {
     email: "admin@local.com",
-    password: "123456",
+    password: "123123",
     name: "Administrador Local",
     role: "ADMIN",
-    ceo: true,
+    birthDate: dayjs("1992-08-20").toDate(),
+    hiringDate: dayjs().subtract(4, "year").add(12, "day").toDate(),
+    forceResetPassword: false,
   },
   {
     email: "employee@local.com",
-    password: "123456",
+    password: "123123",
     name: "Funcionário Local",
     role: "EMPLOYEE",
-    ceo: false,
+    birthDate: dayjs("1995-02-24").toDate(),
+    hiringDate: dayjs().subtract(1, "year").toDate(),
+    forceResetPassword: false,
   },
 ];
 
@@ -51,12 +60,18 @@ export async function seedAuthUsers() {
 
       uid = created.uid;
       console.log(`✅ Auth criado: ${user.email}`);
+
+      // 🔥 CUSTOM CLAIM
+      await auth.setCustomUserClaims(uid, {
+        role: user.role,
+        forceResetPassword: user.forceResetPassword,
+      });
     }
 
     // =========================
     // FIRESTORE (EMPLOYEE)
     // =========================
-    const employeeRef = db.collection("employees").doc(uid);
+    const employeeRef = db.collection(EMPLOYEES_COLLECTION).doc(uid);
     const snapshot = await employeeRef.get();
 
     if (!snapshot.exists) {
@@ -65,11 +80,10 @@ export async function seedAuthUsers() {
         name: user.name,
         email: user.email,
         enabled: true,
-        forceResetPassword: true, // 🔑 força troca no primeiro login
+        forceResetPassword: user.forceResetPassword, // 🔑 força troca no primeiro login
         role: user.role,
-        birthDate: new Date().toISOString().substring(0, 10),
-        hiringDate: new Date().toISOString().substring(0, 10),
-        ceo: user.ceo,
+        birthDate: DateUtils.toTimestamp(user.birthDate),
+        hiringDate: DateUtils.toTimestamp(user.hiringDate),
         deleted: false,
       };
 
